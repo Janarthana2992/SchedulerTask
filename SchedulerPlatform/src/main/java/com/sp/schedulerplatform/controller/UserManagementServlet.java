@@ -8,12 +8,13 @@ import jakarta.servlet.annotation.WebServlet;
 import jakarta.servlet.http.HttpServlet;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
-
+import jakarta.servlet.http.HttpSession;
 
 import java.io.IOException;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
+import java.sql.SQLException;
 import java.util.Map;
 
 @WebServlet("/api/usermanage")
@@ -30,6 +31,30 @@ public class UserManagementServlet extends HttpServlet {
         String role = data.get("role");
         String name= data.get("name");
 
+
+        String domain = email.replaceAll(".*@(.+)", "$1");
+        System.out.println(domain);
+
+        try (Connection conn = DbPool.getConnection()) {
+
+            String checkOrgSql = "select domain from organizations LIMIT 1";
+            try (PreparedStatement stmt = conn.prepareStatement(checkOrgSql);
+                 ResultSet rs = stmt.executeQuery()) {
+                if (rs.next()) {
+                    String existingDomain = rs.getString("domain");
+                    if (!existingDomain.equalsIgnoreCase(domain)) {
+                        JsonUtil.sendJsonError(resp, "organization with same domain needed", HttpServletResponse.SC_FORBIDDEN);
+                        return;
+                    }
+                }
+            }
+        } catch (SQLException e) {
+            throw new RuntimeException(e);
+        } catch (InterruptedException e) {
+            throw new RuntimeException(e);
+        }
+        System.out.println(email);
+        System.out.println(role);
         if (email == null || role == null || (!role.equals("Viewer") && !role.equals("Operator"))) {
             JsonUtil.sendJsonError(resp, "insufficient", HttpServletResponse.SC_BAD_REQUEST);
             return;
@@ -37,8 +62,8 @@ public class UserManagementServlet extends HttpServlet {
 
         String loggedInUserRole = (String) req.getSession().getAttribute("userRole");
         System.out.println(loggedInUserRole);
-        Integer loggedInOrgId = 2;
-
+        Integer loggedInOrgId = (Integer) req.getSession().getAttribute("orgId");
+        System.out.println(loggedInOrgId);
         if (loggedInUserRole == null || !loggedInUserRole.equals("Admin") ) {
             JsonUtil.sendJsonError(resp, "unauthrized only admin ", HttpServletResponse.SC_UNAUTHORIZED);
             return;
@@ -106,7 +131,8 @@ public class UserManagementServlet extends HttpServlet {
         }
 
         String loggedInUserRole = (String) req.getSession().getAttribute("userRole");
-        Integer loggedInOrgId = 2;
+        Integer loggedInOrgId = (Integer) req.getSession().getAttribute("orgId");
+
         System.out.println(loggedInUserRole);
 
         if (loggedInUserRole == null || !loggedInUserRole.equals("Admin") ) {
@@ -142,7 +168,7 @@ public class UserManagementServlet extends HttpServlet {
 
             conn.commit();
 
-            JsonUtil.sendJsonResponse(resp, Map.of("message", "user deleted "));
+            JsonUtil.sendJsonResponse(resp, Map.of("message", "user deleted successfully"));
 
         } catch (Exception e) {
             e.printStackTrace();

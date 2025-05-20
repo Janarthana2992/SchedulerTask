@@ -1,5 +1,6 @@
 package com.sp.schedulerplatform.controller;
 
+import com.sp.schedulerplatform.utils.PasswordUtil;
 
 import com.sp.schedulerplatform.utils.DbPool;
 import com.sp.schedulerplatform.utils.JsonUtil;
@@ -7,6 +8,7 @@ import jakarta.servlet.annotation.WebServlet;
 import jakarta.servlet.http.HttpServlet;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
+import com.sp.schedulerplatform.utils.PasswordUtil;
 
 import java.io.IOException;
 import java.sql.Connection;
@@ -25,8 +27,9 @@ public class RegisterServlet extends HttpServlet {
         String username = data.get("username");
         String password = data.get("password");
         String confirmPassword = data.get("confirmPassword");
-        System.out.println("email");
-        System.out.println("username");
+        String hashPassAdmin= PasswordUtil.hashPassword(password);
+
+
 
 
         if (email == null || username == null || password == null || confirmPassword == null) {
@@ -40,21 +43,35 @@ public class RegisterServlet extends HttpServlet {
         }
 
 
+        System.out.println(PasswordUtil.isStrongPassword(password));
+        if (!PasswordUtil.isStrongPassword(password)){
+            JsonUtil.sendJsonError(resp,"need Strong password include 8 chars , caps , small sym, no",HttpServletResponse.SC_BAD_REQUEST);
+            return;
+        }
+
+
         String domain = email.replaceAll(".*@(.+)", "$1");
 
         try (Connection conn = DbPool.getConnection()) {
 
-            String checkOrgSql = "select id from organizations LIMIT 1";
+            String checkOrgSql = "select domain from organizations LIMIT 1";
             try (PreparedStatement stmt = conn.prepareStatement(checkOrgSql);
                  ResultSet rs = stmt.executeQuery()) {
                 if (rs.next()) {
+                    String existingDomain= rs.getString("domain");
+                    if (!existingDomain.equalsIgnoreCase(domain)) {
+                        JsonUtil.sendJsonError(resp, "organization  iwth diff domain already exist", HttpServletResponse.SC_FORBIDDEN);
+                        return;
+                    }
+                    else{
                     JsonUtil.sendJsonError(resp, "organization already exist", HttpServletResponse.SC_BAD_REQUEST);
                     return;
                 }
             }
+                }
 
 
-            int orgId = 0;
+            int orgId =0;
             String orgInsertSql = "insert into  organizations (domain, name) values (?, ?) RETURNING id";
             try (PreparedStatement stmt = conn.prepareStatement(orgInsertSql)) {
                 stmt.setString(1, domain);
@@ -70,7 +87,7 @@ public class RegisterServlet extends HttpServlet {
             try (PreparedStatement stmt = conn.prepareStatement(userInsertSql)) {
                 stmt.setString(1, email.toLowerCase());
                 stmt.setString(2, username);
-                stmt.setString(3, password);
+                stmt.setString(3, hashPassAdmin);
                 stmt.setString(4, "Admin");
                 stmt.setBoolean(5, true);
                 stmt.setInt(6, orgId);

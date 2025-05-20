@@ -3,6 +3,7 @@ package com.sp.schedulerplatform.controller;
 import com.sp.schedulerplatform.utils.DbPool;
 import com.sp.schedulerplatform.utils.JsonUtil;
 
+import com.sp.schedulerplatform.utils.PasswordUtil;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.annotation.WebServlet;
 import jakarta.servlet.http.HttpServlet;
@@ -26,15 +27,21 @@ public class InviteServlet extends HttpServlet {
         String password = data.get("password");
         String confirmPassword = data.get("confirmpassword");
 
+
         if (inviteToken == null || password == null || confirmPassword == null) {
             JsonUtil.sendJsonError(resp, "insufficient data", HttpServletResponse.SC_BAD_REQUEST);
             return;
         }
 
-        if (!password.equals(confirmPassword)) {
+        if (password.equals(confirmPassword)) {
             JsonUtil.sendJsonError(resp, "passwords do not match", HttpServletResponse.SC_BAD_REQUEST);
             return;
         }
+        if (!PasswordUtil.isStrongPassword(password)){
+            JsonUtil.sendJsonError(resp,"need Strong password include 8 chars , caps , small sym, no",HttpServletResponse.SC_BAD_REQUEST);
+            return;
+        }
+
 
         try (Connection conn = DbPool.getConnection()) {
             conn.setAutoCommit(false);
@@ -54,7 +61,7 @@ public class InviteServlet extends HttpServlet {
                 }
             }
 
-            String hashedPwd = (password);
+            String hashedPwd = PasswordUtil.hashPassword(password);
 
             String updatePwdSql = "UPDATE users SET password_hash = ?, invite_token = NULL, is_verified = TRUE WHERE id = ?";
             try (PreparedStatement stmt = conn.prepareStatement(updatePwdSql)) {

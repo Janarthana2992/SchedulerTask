@@ -23,3 +23,25 @@
     "name":"Viewer2",
     "role":"Viewer"
 }
+
+{
+"name": "job1",
+"description":" this is description area",
+"executionMode":" ONCE";
+        "concurrencyPolicy": " ALLOW";
+        "ScheduledTime": " 10:10:10";
+
+       "maxRetries": "2 ";
+       "retryDelay":" 1000";
+
+}
+
+{
+  "name": "job1",
+  "description": "hi",
+  "scheduledTime": "2025-05-21 02:00:00",
+  "executionMode": "DAILY",
+  "maxRetries": "3",
+  "retryDelay": "300000",
+  "concurrencyPolicy": "ALLOW"
+}

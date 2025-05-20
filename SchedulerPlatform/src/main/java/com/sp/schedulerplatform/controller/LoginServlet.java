@@ -25,28 +25,34 @@ public class LoginServlet extends HttpServlet {
         String email = data.get("email");
         String password = data.get("password");
 
+
         if (email == null || password == null) {
             JsonUtil.sendJsonError(resp, "missing fields", HttpServletResponse.SC_BAD_REQUEST);
             return;
         }
 
+
+
+
+
         try (Connection conn = DbPool.getConnection()) {
             String sql = "select id, name, password_hash, user_role, is_verified, organization_id FRom users where email = ?";
             try (PreparedStatement stmt = conn.prepareStatement(sql)) {
                 stmt.setString(1, email.toLowerCase());
+
                 try (ResultSet rs = stmt.executeQuery()) {
                     if (!rs.next()) {
-                        JsonUtil.sendJsonError(resp, "invalid credentials", HttpServletResponse.SC_UNAUTHORIZED);
+                        JsonUtil.sendJsonError(resp, "no user exist ", HttpServletResponse.SC_BAD_REQUEST);
                         return;
                     }
 
                     String storedHash = rs.getString("password_hash");
                     boolean isVerified = rs.getBoolean("is_verified");
 
-//                    if (!PasswordUtil.checkPassword(password, storedHash)) {
-//                        JsonUtil.sendJsonError(resp, "invalid credentials", HttpServletResponse.SC_UNAUTHORIZED);
-//                        return;
-//                    }
+                    if (!PasswordUtil.checkPassword(password,storedHash)) {
+                        JsonUtil.sendJsonError(resp, "invalid credentials", HttpServletResponse.SC_UNAUTHORIZED);
+                        return;
+                    }
 
                     if (!isVerified) {
                         JsonUtil.sendJsonError(resp, "user not verified", HttpServletResponse.SC_FORBIDDEN);
