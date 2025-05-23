@@ -13,8 +13,6 @@ import java.util.concurrent.*;
 public class JobScheduler implements Runnable {
     private static final JobScheduler instance = new JobScheduler();
 
-
-
     private final ThreadPoolExecutor executor = new ThreadPoolExecutor(
             5, 20, 30L, TimeUnit.SECONDS,
             new LinkedBlockingQueue<>()
@@ -22,8 +20,7 @@ public class JobScheduler implements Runnable {
 
     private static final Map<Integer, Future<?>> runningJobs = new ConcurrentHashMap<>();
     private volatile boolean running = true;
-    private  volatile int retries=0;
-    private  volatile int i=0;
+    private volatile int i = 0;
 
     public JobScheduler() {
         executor.allowCoreThreadTimeOut(true);
@@ -37,7 +34,9 @@ public class JobScheduler implements Runnable {
     public void run() {
         while (running) {
             System.out.println(i++);
-            try (Connection conn = DbPool.getConnection()) {
+            Connection conn = null;
+            try {
+                conn = DbPool.getConnection();
                 String sql = "SELECT * FROM jobs WHERE scheduled_time <= now() ORDER BY scheduled_time ASC";
                 try (PreparedStatement stmt = conn.prepareStatement(sql);
                      ResultSet rs = stmt.executeQuery()) {
@@ -63,7 +62,7 @@ public class JobScheduler implements Runnable {
                                     oldFuture.cancel(true);
                                 }
                             }
-
+                            System.out.println("hi");
                             Future<?> future = executor.submit(createTask(jobId, name, execMode, execModeRaw,
                                     maxRetries, retryDelay, concurrencyPolicy, scheduledTime));
                             runningJobs.put(jobId, future);
@@ -72,10 +71,16 @@ public class JobScheduler implements Runnable {
                 }
             } catch (Exception e) {
                 e.printStackTrace();
+            } finally {
+                if (conn != null) {
+                    DbPool.release(conn);
+                }
             }
 
+            runningJobs.entrySet().removeIf(entry -> entry.getValue().isDone());
+
             try {
-                Thread.sleep(3000);
+                Thread.sleep(30000);
             } catch (InterruptedException e) {
                 running = false;
                 Thread.currentThread().interrupt();
@@ -117,8 +122,11 @@ public class JobScheduler implements Runnable {
     private boolean isRecurring(String execMode) {
         return !execMode.equalsIgnoreCase("once");
     }
+
     public boolean triggerJob(int jobId) {
-        try (Connection conn = DbPool.getConnection()) {
+        Connection conn = null;
+        try {
+            conn = DbPool.getConnection();
             String sql = "SELECT * FROM jobs WHERE id = ?";
             try (PreparedStatement stmt = conn.prepareStatement(sql)) {
                 stmt.setInt(1, jobId);
@@ -149,7 +157,6 @@ public class JobScheduler implements Runnable {
                         }
                     }
 
-
                     Future<?> future = executor.submit(createTask(jobId, name, execMode, execModeRaw,
                             maxRetries, retryDelay, concurrencyPolicy, scheduledTime));
                     runningJobs.put(jobId, future);
@@ -161,34 +168,63 @@ public class JobScheduler implements Runnable {
             System.err.println("Failed to trigger job with ID " + jobId);
             e.printStackTrace();
             return false;
-        }
-    }
-    public static boolean cancelJobBeforeExecution(int jobId, int userId) {
-        Future<?> future = runningJobs.get(jobId);
-        if (future != null && !future.isDone() && !future.isCancelled()) {
-            boolean cancelled = future.cancel(true);
-            if (cancelled) {
-                logSkippedExecution(jobId, userId);
-                runningJobs.remove(jobId);
-                return true;
+        } finally {
+            if (conn != null) {
+                DbPool.release(conn);
             }
         }
-        return false;
+    }
+
+    public static boolean cancelJobBeforeExecution(int jobId, int userId) {
+        String sql = "SELECT status FROM job_executions WHERE job_id = ? ORDER BY started_at DESC LIMIT 1";
+        Connection conn = null;
+
+        try {
+            conn = DbPool.getConnection();
+            try (PreparedStatement stmt = conn.prepareStatement(sql)) {
+                stmt.setInt(1, jobId);
+                ResultSet rs = stmt.executeQuery();
+
+                if (rs.next()) {
+                    String status = rs.getString("status");
+
+                    if ("running".equalsIgnoreCase(status) || "success".equalsIgnoreCase(status)) {
+                        return false;
+                    }
+                }
+                logSkippedExecution(jobId, userId);
+                return true;
+            }
+        } catch (Exception e) {
+            System.err.println("Failed to check job execution status for jobId: " + jobId);
+            e.printStackTrace();
+            return false;
+        } finally {
+            if (conn != null) {
+                DbPool.release(conn);
+            }
+        }
     }
 
     private static void logSkippedExecution(int jobId, int userId) {
         String sql = "INSERT INTO job_executions (job_id, status, started_at, ended_at, job_duration, error_message) " +
                 "VALUES (?, 'skipped', now(), now(), 0, 'Job manually cancelled before execution')";
-        try (var conn = DbPool.getConnection();
-             var stmt = conn.prepareStatement(sql)) {
-            stmt.setInt(1, jobId);
-            stmt.executeUpdate();
+        Connection conn = null;
+        try {
+            conn = DbPool.getConnection();
+            try (PreparedStatement stmt = conn.prepareStatement(sql)) {
+                stmt.setInt(1, jobId);
+                stmt.executeUpdate();
+            }
         } catch (Exception e) {
             System.err.println("Failed to log skipped job execution for job " + jobId);
             e.printStackTrace();
+        } finally {
+            if (conn != null) {
+                DbPool.release(conn);
+            }
         }
     }
-
 
     private Runnable createTask(int jobId, String jobClass, String execMode, String execModeRaw,
                                 int maxRetries, long retryDelay, String concurrencyPolicy, Timestamp scheduledTime) {
@@ -196,6 +232,7 @@ public class JobScheduler implements Runnable {
             LocalDateTime startTime = LocalDateTime.now();
             boolean success = false;
             String errorMessage = null;
+            int retries = 0;
 
             int executionId = insertExecutionLogStart(jobId);
             if (executionId == -1) {
@@ -210,7 +247,6 @@ public class JobScheduler implements Runnable {
                 errorMessage = "Job was delayed. Originally scheduled for: " + timeStr;
             }
 
-
             try {
                 while (retries <= maxRetries && !Thread.currentThread().isInterrupted()) {
                     try {
@@ -223,11 +259,11 @@ public class JobScheduler implements Runnable {
                         success = true;
                         break;
                     } catch (Exception e) {
-                        System.out.println("retry delay ; "+retryDelay);
+                        System.out.println("retry delay ; " + retryDelay);
 
-                        updateJobExecutionStatus(executionId, "failed");
+                        updateJobExecutionStatus(executionId, "retrying");
                         retries++;
-                        System.out.println("retry:"+retries);
+                        System.out.println("retry:" + retries);
                         String exMsg = e.getMessage() != null ? e.getMessage() : e.toString();
                         errorMessage = (errorMessage == null) ? exMsg : errorMessage + " | " + exMsg;
 
@@ -241,6 +277,9 @@ public class JobScheduler implements Runnable {
                 updateJobExecutionStatus(executionId, "failed");
                 errorMessage = (errorMessage == null) ? "job interrupted" : errorMessage + " | Job interrupted";
                 Thread.currentThread().interrupt();
+            } finally {
+                runningJobs.remove(jobId);
+                System.out.println("Job " + jobId + " completed and removed from running jobs");
             }
 
             LocalDateTime endTime = LocalDateTime.now();
@@ -250,8 +289,6 @@ public class JobScheduler implements Runnable {
                 Timestamp nextScheduledTime = calculateNextScheduledTime(execMode, Timestamp.valueOf(startTime), execModeRaw);
                 updateNextScheduledTime(jobId, nextScheduledTime);
             }
-
-            runningJobs.remove(jobId);
         };
     }
 
@@ -282,79 +319,115 @@ public class JobScheduler implements Runnable {
     }
 
     private void updateNextScheduledTime(int jobId, Timestamp newTime) {
-        try (Connection conn = DbPool.getConnection();
-             PreparedStatement stmt = conn.prepareStatement("UPDATE jobs SET scheduled_time = ? WHERE id = ?")) {
-            stmt.setTimestamp(1, newTime);
-            stmt.setInt(2, jobId);
-            stmt.executeUpdate();
+        Connection conn = null;
+        try {
+            conn = DbPool.getConnection();
+            try (PreparedStatement stmt = conn.prepareStatement("UPDATE jobs SET scheduled_time = ? WHERE id = ?")) {
+                stmt.setTimestamp(1, newTime);
+                stmt.setInt(2, jobId);
+                stmt.executeUpdate();
+            }
         } catch (Exception e) {
             System.err.println("Failed to update scheduled_time for job: " + jobId);
             e.printStackTrace();
+        } finally {
+            if (conn != null) {
+                DbPool.release(conn);
+            }
         }
     }
 
     private void updateJobExecutionStatus(int executionId, String status) {
-        try (Connection conn = DbPool.getConnection();
-             PreparedStatement stmt = conn.prepareStatement("UPDATE job_executions SET status = ? WHERE id = ?")) {
-            stmt.setString(1, status);
-            stmt.setInt(2, executionId);
-            stmt.executeUpdate();
+        Connection conn = null;
+        try {
+            conn = DbPool.getConnection();
+            try (PreparedStatement stmt = conn.prepareStatement("UPDATE job_executions SET status = ? WHERE id = ?")) {
+                stmt.setString(1, status);
+                stmt.setInt(2, executionId);
+                stmt.executeUpdate();
+            }
         } catch (Exception e) {
             System.err.println("Failed to update job execution status for ID: " + executionId);
             e.printStackTrace();
+        } finally {
+            if (conn != null) {
+                DbPool.release(conn);
+            }
         }
     }
 
     private int insertExecutionLogStart(int jobId) {
         String sql = "INSERT INTO job_executions (job_id, status, started_at) VALUES (?, ?, ?) RETURNING id";
-        try (Connection conn = DbPool.getConnection();
-             PreparedStatement stmt = conn.prepareStatement(sql)) {
-            stmt.setInt(1, jobId);
-            stmt.setString(2, "running");
-            stmt.setTimestamp(3, Timestamp.valueOf(LocalDateTime.now()));
-            try (ResultSet rs = stmt.executeQuery()) {
-                if (rs.next()) return rs.getInt("id");
+        Connection conn = null;
+        try {
+            conn = DbPool.getConnection();
+            try (PreparedStatement stmt = conn.prepareStatement(sql)) {
+                stmt.setInt(1, jobId);
+                stmt.setString(2, "running");
+                stmt.setTimestamp(3, Timestamp.valueOf(LocalDateTime.now()));
+                try (ResultSet rs = stmt.executeQuery()) {
+                    if (rs.next()) return rs.getInt("id");
+                }
             }
         } catch (Exception e) {
             System.err.println("Failed to insert execution log for job " + jobId);
             e.printStackTrace();
+        } finally {
+            if (conn != null) {
+                DbPool.release(conn);
+            }
         }
         return -1;
     }
 
     private void updateExecutionStatus(long executionId,
                                        LocalDateTime start, LocalDateTime end, String errorMessage) {
-        String sql = "UPDATE job_executions SET ended_at = ?, error_message = ?, job_duration = ? WHERE id = ?";
-        try (Connection conn = DbPool.getConnection();
-             PreparedStatement stmt = conn.prepareStatement(sql)) {
-            stmt.setTimestamp(1, Timestamp.valueOf(end));
-            if (errorMessage != null) {
-                stmt.setString(2, errorMessage);
-            } else {
-                stmt.setNull(2, Types.VARCHAR);
+        String sql = "update job_executions set ended_at = ?, error_message = ?, job_duration = ? where id = ?";
+        Connection conn = null;
+        try {
+            conn = DbPool.getConnection();
+            try (PreparedStatement stmt = conn.prepareStatement(sql)) {
+                stmt.setTimestamp(1, Timestamp.valueOf(end));
+                if (errorMessage != null) {
+                    stmt.setString(2, errorMessage);
+                } else {
+                    stmt.setNull(2, Types.VARCHAR);
+                }
+                stmt.setObject(3, Duration.between(start, end).toMillis());
+                stmt.setLong(4, executionId);
+                stmt.executeUpdate();
             }
-            stmt.setObject(3, Duration.between(start, end).toMillis());
-            stmt.setLong(4, executionId);
-            stmt.executeUpdate();
         } catch (Exception e) {
-            System.err.println("Failed to update execution log for executionId: " + executionId);
+            System.err.println("failed to update execution log for executionId: " + executionId);
             e.printStackTrace();
+        } finally {
+            if (conn != null) {
+                DbPool.release(conn);
+            }
         }
     }
 
     private boolean isJobSuccessfullyExecuted(int jobId) {
         String sql = "SELECT status FROM job_executions WHERE job_id = ? ORDER BY id DESC LIMIT 1";
-        try (Connection conn = DbPool.getConnection();
-             PreparedStatement stmt = conn.prepareStatement(sql)) {
-            stmt.setInt(1, jobId);
-            try (ResultSet rs = stmt.executeQuery()) {
-                if (rs.next()) {
-                    return "success".equalsIgnoreCase(rs.getString("status"));
+        Connection conn = null;
+        try {
+            conn = DbPool.getConnection();
+            try (PreparedStatement stmt = conn.prepareStatement(sql)) {
+                stmt.setInt(1, jobId);
+                try (ResultSet rs = stmt.executeQuery()) {
+                    if (rs.next()) {
+                        String status = rs.getString("status");
+                        return "success".equalsIgnoreCase(status) || "skipped".equalsIgnoreCase(status);
+                    }
                 }
             }
         } catch (Exception e) {
             System.err.println("Failed to check last execution status for job: " + jobId);
             e.printStackTrace();
+        } finally {
+            if (conn != null) {
+                DbPool.release(conn);
+            }
         }
         return false;
     }

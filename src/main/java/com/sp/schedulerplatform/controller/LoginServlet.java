@@ -1,3 +1,4 @@
+
 package com.sp.schedulerplatform.controller;
 
 import com.sp.schedulerplatform.utils.DbPool;
@@ -25,18 +26,15 @@ public class LoginServlet extends HttpServlet {
         String email = data.get("email");
         String password = data.get("password");
 
-
         if (email == null || password == null) {
             JsonUtil.sendJsonError(resp, "missing fields", HttpServletResponse.SC_BAD_REQUEST);
             return;
         }
 
-
-
-
-
-        try (Connection conn = DbPool.getConnection()) {
-            String sql = "select id, name, password_hash, user_role, is_verified, organization_id FRom users where email = ?";
+        Connection conn = null;
+        try {
+            conn = DbPool.getConnection();
+            String sql = "select id, name, password_hash, user_role, is_verified, organization_id from users where email = ?";
             try (PreparedStatement stmt = conn.prepareStatement(sql)) {
                 stmt.setString(1, email.toLowerCase());
 
@@ -49,7 +47,7 @@ public class LoginServlet extends HttpServlet {
                     String storedHash = rs.getString("password_hash");
                     boolean isVerified = rs.getBoolean("is_verified");
 
-                    if (!PasswordUtil.checkPassword(password,storedHash)) {
+                    if (!PasswordUtil.checkPassword(password, storedHash)) {
                         JsonUtil.sendJsonError(resp, "invalid credentials", HttpServletResponse.SC_UNAUTHORIZED);
                         return;
                     }
@@ -58,7 +56,6 @@ public class LoginServlet extends HttpServlet {
                         JsonUtil.sendJsonError(resp, "user not verified", HttpServletResponse.SC_FORBIDDEN);
                         return;
                     }
-
 
                     HttpSession session = req.getSession(true);
                     session.setAttribute("userId", rs.getInt("id"));
@@ -76,6 +73,10 @@ public class LoginServlet extends HttpServlet {
         } catch (Exception e) {
             e.printStackTrace();
             JsonUtil.sendJsonError(resp, "server error", HttpServletResponse.SC_INTERNAL_SERVER_ERROR);
+        } finally {
+            if (conn != null) {
+                DbPool.release(conn);
+            }
         }
     }
 }

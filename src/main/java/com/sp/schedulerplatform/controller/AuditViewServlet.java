@@ -20,40 +20,46 @@ public class AuditViewServlet extends HttpServlet {
 
         List<Map<String, Object>> executions = new ArrayList<>();
 
-        String sql = "SELECT e.id, e.job_id, j.name AS job_name, e.status, e.started_at, " +
+        String sql = "select e.id, e.job_id, j.name as job_name, e.status, e.started_at, " +
                 "e.ended_at, e.error_message, e.job_duration " +
-                "FROM job_executions e " +
-                "JOIN jobs j ON e.job_id = j.id " +
-                "ORDER BY e.started_at DESC " +
-                "LIMIT 100";
+                "from job_executions e " +
+                "join jobs j on e.job_id = j.id " +
+                "order by e.started_at desc " +
+                "limit 100";
 
-        try (Connection conn = DbPool.getConnection();
-             PreparedStatement stmt = conn.prepareStatement(sql);
-             ResultSet rs = stmt.executeQuery()) {
+        Connection conn = null;
+        try {
+            conn = DbPool.getConnection();
+            try (PreparedStatement stmt = conn.prepareStatement(sql);
+                 ResultSet rs = stmt.executeQuery()) {
 
-            while (rs.next()) {
-                Map<String, Object> row = new LinkedHashMap<>();
-                Timestamp startedAt = rs.getTimestamp("started_at");
-                Timestamp endedAt = rs.getTimestamp("ended_at");
-                String errorMessage = rs.getString("error_message");
+                while (rs.next()) {
+                    Map<String, Object> row = new LinkedHashMap<>();
+                    Timestamp startedAt = rs.getTimestamp("started_at");
+                    Timestamp endedAt = rs.getTimestamp("ended_at");
+                    String errorMessage = rs.getString("error_message");
 
-                row.put("id", rs.getLong("id"));
-                row.put("jobId", rs.getInt("job_id"));
-                row.put("jobName", rs.getString("job_name"));
-                row.put("status", rs.getString("status"));
-                row.put("startedAt", startedAt);
-                row.put("endedAt", endedAt);
-                row.put("jobDuration", rs.getString("job_duration"));
+                    row.put("id", rs.getLong("id"));
+                    row.put("jobId", rs.getInt("job_id"));
+                    row.put("jobName", rs.getString("job_name"));
+                    row.put("status", rs.getString("status"));
+                    row.put("startedAt", startedAt);
+                    row.put("endedAt", endedAt);
+                    row.put("jobDuration", rs.getString("job_duration"));
 
-                row.put("errorMessage", errorMessage);
-                executions.add(row);
+                    row.put("errorMessage", errorMessage);
+                    executions.add(row);
+                }
+
+                JsonUtil.sendSuccess(response, executions);
             }
-
-            JsonUtil.sendSuccess(response, executions);
-
         } catch (Exception e) {
             e.printStackTrace();
             JsonUtil.sendJsonError(response, "Failed to retrieve job execution logs", 500);
+        } finally {
+            if (conn != null) {
+                DbPool.release(conn);
+            }
         }
     }
 }

@@ -1,6 +1,5 @@
 package com.sp.schedulerplatform.controller;
 
-
 import com.sp.schedulerplatform.utils.AuditLogger;
 import com.sp.schedulerplatform.utils.DbPool;
 import com.sp.schedulerplatform.utils.JsonUtil;
@@ -42,9 +41,11 @@ public class JobManageServlet extends HttpServlet {
         int maxRetries = Integer.parseInt(data.getOrDefault("maxRetries", "0"));
         long retryDelay = Long.parseLong(data.getOrDefault("retryDelay", "0"));
 
-        try (Connection conn = DbPool.getConnection()) {
-            String sql = "INSERT INTO jobs(name, description, scheduled_time, execution_mode, retry_max, retry_delay_ms, concurrency_policy, created_by) " +
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING id";
+        Connection conn = null;
+        try {
+            conn = DbPool.getConnection();
+            String sql = "insert into jobs(name, description, scheduled_time, execution_mode, retry_max, retry_delay_ms, concurrency_policy, created_by) " +
+                    "values (?, ?, ?, ?, ?, ?, ?, ?) returning id";
 
             try (PreparedStatement stmt = conn.prepareStatement(sql)) {
                 stmt.setString(1, name);
@@ -64,6 +65,10 @@ public class JobManageServlet extends HttpServlet {
             }
         } catch (SQLException | InterruptedException e) {
             throw new RuntimeException(e);
+        } finally {
+            if (conn != null) {
+                DbPool.release(conn);
+            }
         }
     }
 
@@ -90,9 +95,11 @@ public class JobManageServlet extends HttpServlet {
 
         int userId = (int) session.getAttribute("userId");
 
-        try (Connection conn = DbPool.getConnection()) {
+        Connection conn = null;
+        try {
+            conn = DbPool.getConnection();
 
-            String selectSql = "SELECT * FROM jobs WHERE id = ?";
+            String selectSql = "select * from jobs where id = ?";
             PreparedStatement selectStmt = conn.prepareStatement(selectSql);
             selectStmt.setInt(1, jobIdInt);
             ResultSet rs = selectStmt.executeQuery();
@@ -119,7 +126,6 @@ public class JobManageServlet extends HttpServlet {
             int maxRetries = Integer.parseInt(data.getOrDefault("maxRetries", "0"));
             long retryDelay = Long.parseLong(data.getOrDefault("retryDelay", "0"));
 
-
             AuditLogger.logJobFieldChange(jobIdInt, userId, "name", oldName, name);
             AuditLogger.logJobFieldChange(jobIdInt, userId, "description", oldDescription, description);
             AuditLogger.logJobFieldChange(jobIdInt, userId, "execution_mode", oldExecutionMode, executionMode);
@@ -129,8 +135,7 @@ public class JobManageServlet extends HttpServlet {
             AuditLogger.logJobFieldChange(jobIdInt, userId, "retry_max", String.valueOf(oldMaxRetries), String.valueOf(maxRetries));
             AuditLogger.logJobFieldChange(jobIdInt, userId, "retry_delay_ms", String.valueOf(oldRetryDelay), String.valueOf(retryDelay));
 
-
-            String updateSql = "UPDATE jobs SET name=?, description=?, scheduled_time=?, execution_mode=?, retry_max=?, retry_delay_ms=?, concurrency_policy=?, created_by=? WHERE id = ?";
+            String updateSql = "update jobs set name=?, description=?, scheduled_time=?, execution_mode=?, retry_max=?, retry_delay_ms=?, concurrency_policy=?, created_by=? where id = ?";
             try (PreparedStatement stmt = conn.prepareStatement(updateSql)) {
                 stmt.setString(1, name);
                 stmt.setString(2, description);
@@ -151,9 +156,12 @@ public class JobManageServlet extends HttpServlet {
             }
         } catch (SQLException | InterruptedException e) {
             throw new RuntimeException(e);
+        } finally {
+            if (conn != null) {
+                DbPool.release(conn);
+            }
         }
     }
-
 
     protected void doGet(HttpServletRequest request, HttpServletResponse response) throws IOException {
         HttpSession session = request.getSession(false);
@@ -162,8 +170,10 @@ public class JobManageServlet extends HttpServlet {
             return;
         }
 
-        try (Connection conn = DbPool.getConnection()) {
-            String sql = "SELECT id, name, description, scheduled_time, execution_mode, retry_max, retry_delay_ms, concurrency_policy, updated_at FROM jobs";
+        Connection conn = null;
+        try {
+            conn = DbPool.getConnection();
+            String sql = "select id, name, description, scheduled_time, execution_mode, retry_max, retry_delay_ms, concurrency_policy, updated_at from jobs";
 
             try (PreparedStatement stmt = conn.prepareStatement(sql); ResultSet rs = stmt.executeQuery()) {
                 List<Map<String, Object>> jobs = new ArrayList<>();
@@ -186,6 +196,10 @@ public class JobManageServlet extends HttpServlet {
             }
         } catch (SQLException | InterruptedException ex) {
             throw new RuntimeException(ex);
+        } finally {
+            if (conn != null) {
+                DbPool.release(conn);
+            }
         }
     }
 }

@@ -1,6 +1,5 @@
 package com.sp.schedulerplatform.controller;
 
-
 import com.sp.schedulerplatform.scheduler.JobScheduler;
 import jakarta.servlet.annotation.WebServlet;
 import jakarta.servlet.http.HttpServlet;
@@ -12,34 +11,31 @@ import java.io.IOException;
 @WebServlet("/startScheduler")
 public class ScheduleStartServlet extends HttpServlet {
 
-    private Thread schedulerThread;
+    private static volatile boolean isRunning = false;
     private static JobScheduler scheduler;
-    public void init(){
-        scheduler=new JobScheduler();
-        scheduler.run();
-    }
 
-    public void doGet (HttpServletRequest request, HttpServletResponse response ) throws IOException {
-        if (schedulerThread==null || !schedulerThread.isAlive()) {
+    @Override
+    public void doGet(HttpServletRequest request, HttpServletResponse response) throws IOException {
+
+        if (isRunning) {
+            response.getWriter().write("Scheduler already running");
+            return;
+        }
+
+        new Thread(() -> {
+            isRunning = true;
             scheduler = new JobScheduler();
-            schedulerThread = new Thread(scheduler, "jobSchedulerThread");
-            schedulerThread.start();
-            response.getWriter().write("scheduler started");
-        }
-        else{
-            response.getWriter().write("schedule already running");
+            scheduler.run();
+            isRunning = false;
+        }).start();
 
-        }
-
+        response.getWriter().write("Scheduler started");
     }
 
-    public void destroy(){
-        if (scheduler!=null){
+    @Override
+    public void destroy() {
+        if (scheduler != null) {
             scheduler.shutdown();
         }
-        if (schedulerThread != null){
-            schedulerThread.interrupt();
-        }
     }
-
 }
